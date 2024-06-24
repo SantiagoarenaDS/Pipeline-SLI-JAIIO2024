@@ -1,0 +1,485 @@
+
+Seccion de instalacion de paquetes y carga de librerias
+
+```{r}
+install.packages("mRMRe")
+install.packages("FSelector")
+install.packages("CORElearn")
+install.packages("caret")
+install.packages("cowplot")
+```
+
+```{r}
+library(ggplot2)
+library(caret)
+library(dplyr)
+library(mRMRe)
+library(FSelector)
+library(CORElearn)
+library(randomForest)
+library(cowplot)
+library(class)
+library(ROCR)
+library(readr)
+library(tidyverse)
+library(MASS)
+
+```
+Se cargan datos y normalizan valores.
+
+```{r}
+#C:\Users\Santiago\Desktop\Impaired children
+setwd('C:\\Users\\Santiago\\Desktop\\impaired children')
+data <- read.csv("all_data_R.csv")
+
+#Se eliminó las variables que más presentaban NA y luego, se aplico un Na.omit. Hubo que remplazar ceros
+#vacios por NA
+
+data[data == ""] <- NA
+data = na.omit(data)
+#Reiniciamos el index
+data <- data[!duplicated(data), ]
+rownames(data) <- NULL
+
+data <- subset(data, select = -c(filename, group, corpus))
+
+data$sex <- ifelse(data$sex == "male", 0, ifelse(data$sex == "female", 1, data$sex))
+data$height <- data$age
+data$age <- NULL
+
+
+sapply(data, class)
+data$sex <- as.numeric(data$sex)
+
+#las variables:
+#1) de tipo binomial solo Sexo
+#2) de tipo continuo las que son relaciones entre variables
+#cómo summary(data$average_syl)
+#3) de tipo Conteo... la gran mayoria.
+
+```
+
+```{r}
+
+# Lista de variables a incluir en el subset luego de la limpieza inicial, donde se descartan indicadores
+# y se sostienen
+variables_a_incluir <- c("Y","sex","age_years", "child_TNW", "child_TNS", "examiner_TNW", 
+                          "freq_ttr", "r_2_i_verbs", "mor_words", "num_pos_tags", 
+                          "n_dos", "repetition", "retracing", "fillers", 
+                          "word_errors", "f_k", "n_v", "n_aux", "n_3s_v", 
+                          "det_n_pl", "det_pl_n", "pro_aux", "pro_3s_v", 
+                          "total_error", "present_progressive", "propositions_in", 
+                          "propositions_on", "plural_s", "irregular_past_tense", 
+                          "possessive_s", "uncontractible_copula", "articles", 
+                          "regular_past_ed", "regular_3rd_person_s", 
+                          "irregular_3rd_person", "uncontractible_aux", 
+                          "contractible_copula", "contractible_aux", "average_syl", 
+                          "mlu_words", "mlu_morphemes", "mlu100_utts", 
+                          "verb_utt")
+
+
+data <- data[, variables_a_incluir]
+data
+length(data)
+
+```
+Se procede a realizar en definitiva la selección de caracteristicas a través de importance() con el arbol de decisiones y la matriz de correlación
+
+```{r}
+#Invariable: No tiene
+#precondicion: Que exista un data$y y que esté cargada la librería de randomForest
+#postcondicion: el modelo que queda guardado en "target_vs_var"
+
+Importancia_x_variable <- randomForest(as.factor(data$Y)~., data = data,mtry=41, proximity=TRUE, ntree = 500)
+
+#help(randomForest)
+Importancia_x_variable
+
+correlacion <- cor(data,method="spearman")
+summary(correlacion)
+
+correlacion_con_Y <- correlacion["Y", ]
+correlacion_con_Y
+
+cor_matrix <- as.matrix(correlacion_con_Y)[-1, ]
+
+cor_matrix
+
+summary(cor_matrix)
+
+length(cor_matrix)
+
+importance = importance(Importancia_x_variable)
+
+length(importance)
+
+varImpPlot(Importancia_x_variable)
+
+importance_vs_correlacion <- data.frame("Importance"=importance,"Correlacion"= cor_matrix)
+importance_vs_correlacion
+
+length(correlacion_con_Y)
+
+#Cómo sabemos si el split 6 es el +optimo?
+
+#x <- data.frame("importance"=varImpPlot(target_vs_var),"correlacion_y"=correlacion)
+summary(importance_vs_correlacion$MeanDecreaseGini)
+
+#4,4+7,8=6.1
+
+ggplot(data = importance_vs_correlacion, aes(x = MeanDecreaseGini , y = Correlacion,label=rownames(importance_vs_correlacion))) +
+  geom_point()+
+  geom_text(hjust = -0.1, vjust = -0.5, size = 3) +
+  labs(x = "Importancia por media de gini", y = "Correlation") +
+  theme_minimal() +
+  ggtitle("Scatterplot de Correlación y Coeficiente de gini")
+library(ggplot2)
+
+ggplot(data = importance_vs_correlacion, aes(x = MeanDecreaseGini)) +
+  geom_boxplot() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red")+
+  geom_vline(xintercept = 6.1, linetype = "dashed", color = "green") +
+  labs(x = "Atributo importancia de RF", y = "Correlación con variable Target")
+
+
+
+ggplot(data = importance_vs_correlacion, aes(x = MeanDecreaseGini , y = Correlacion)) +
+  geom_point() +
+  scale_color_manual(values = c("red", "blue")) +
+  labs(x = "Atributo importancia de rF", y = "Correlación de variable Target")
+
+ggplot(data = importance_vs_correlacion, aes(x = MeanDecreaseGini , y = Correlacion)) +
+  geom_point() +
+  scale_color_manual(values = c("red", "blue")) +
+  labs(x = "Importancia del atributo (RF)", y = "Correlación con la variable objetivo") +
+  geom_vline(xintercept = 6, linetype = "dashed", color = "green") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red")
+
+ggplot(data = importance_vs_correlacion, aes(x = MeanDecreaseGini , y = Correlacion)) +
+  geom_point(aes(color = ifelse(abs(Correlacion) > 0.1 & MeanDecreaseGini > 6, "Verde", "Azul")), show.legend = FALSE) +
+  scale_color_manual(values = c("Azul" = "grey", "Verde" = "black")) +
+  labs(x = "Importancia del atributo (RF)", y = "Correlación con la variable objetivo") +
+  geom_vline(xintercept = 6, linetype = "dashed", color = "green") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red")
+
+```
+
+Se arma la regresion logistica
+
+
+```{r}
+#Se separa una correlación solo para la variable y.
+set.seed(42)
+
+#Invariable length(vector=n)
+#precondición: Tienen que existir un i=>0 and i<=41, tiene que existir data de tipo data.frame con data$Y= TRUE y temp.model$err.rate=TRUE y un oob.values cuyo length() sea igual al length(vector)
+#postcondición: Posiciones en vector oob.values escritas por el ciclo.
+
+oob.values <- vector(length=43)
+for(i in 1:43) {
+  temp.model <- randomForest(as.factor(data$Y) ~ ., data = data, mtry = i, proximity = TRUE, ntree = 100)
+  oob.values[i] <- temp.model$err.rate[nrow(temp.model$err.rate), 1]
+}
+
+oob.values #Resulta que la posición 7 tiene el error más bajo 0.145 con length=10... con length=40 tenemos 0.1446... con length=41 tuve 0.1427
+min(oob.values)
+#Se determinó la longitud del i óptimo en 41... luego de probar con al menos 100.
+#con 500 arboles tengo 15,04% de error y 0.43 de error de clasificacion error de tipo 2
+
+
+dataframe = data.frame(target_vs_var$err.rate)
+oob.error.data <- data.frame(
+  Trees=rep(1:nrow(target_vs_var$err.rate), times=3),
+  Type=rep(c("OOB","1","0"), each=nrow(target_vs_var$err.rate)),
+  Error=c(target_vs_var$err.rate[,"OOB"],
+          target_vs_var$err.rate[,"1"],
+          target_vs_var$err.rate[,"0"]))
+
+ggplot(data=oob.error.data, aes(x=Trees, y=Error)) + geom_line(aes(color=Type))  #0 es niño sano y 1 niño con problemas
+```
+A continuacion se corren las regresiones logisticas.
+
+```{r}
+
+
+logistic <- glm(data$Y ~ examiner_TNW+mlu_words+age_years+r_2_i_verbs+mlu_morphemes+word_errors+f_k+average_syl+freq_ttr+regular_past_ed+fillers+num_pos_tags+mor_words,family = "binomial", data=data)
+
+summary(logistic)
+#Se dropean las variables que no sean estadísticamente significativas como lo son MLU word, fillers, num_pos y mor words. Tambien se dropearon aquellas que no poseian correlacion mayor al modulo de 0.1. F_K se retiró por ser una variable de tipo indicador y no conteo.
+
+logistic <- glm(data$Y ~ examiner_TNW+r_2_i_verbs+mlu_morphemes+word_errors+f_k+average_syl+freq_ttr+regular_past_ed,family = "binomial", data=data)
+summary(logistic)
+#Se dropea Examiner_tmw
+
+
+
+logistic <- glm(data$Y ~ r_2_i_verbs+mlu_morphemes+word_errors+average_syl+freq_ttr+regular_past_ed,family = "binomial", data=data)
+summary(logistic)
+
+#Métricas de error y prueba de chi cuadrado de la regresion. Si p value es de casi 0
+ll.null <- logistic$null.deviance/-2
+ll.proposed <- logistic$deviance/-2
+(ll.null - ll.proposed) / ll.null
+x = 1 - pchisq(2*(ll.proposed - ll.null), df=(length(logistic$coefficients)-1))
+x #deberia dar cercano a cero
+
+#Grafico de Regresion logistica
+
+predicted.data <- data.frame(
+  probability.of.sli = logistic$fitted.values,
+  Y=data$Y)
+
+predicted.data <- predicted.data[
+  order(predicted.data$probability.of.sli, decreasing=FALSE),]
+predicted.data$rank <- 1:nrow(predicted.data)
+
+predicted.data$Y <- ifelse(data$Y == "0", "Desarrollo Típico", ifelse(data$Y == "1", "SLI", data$Y))
+
+ggplot(data=predicted.data, aes(x=rank, y=probability.of.sli))+
+  geom_point(aes(color=Y),alpha=1,shape=4,stroke=2)+
+  xlab("index")+
+  ylab("Predicted probability of SLI in children")
+
+predicted.data
+
+resumen <- capture.output(summary(logistic))
+
+# Guardar el resumen en un archivo de texto
+writeLines(resumen, "resumen_regresion.txt")
+
+
+```
+
+Se plotean todas las variables de importancia seleccionadas vs la varialbe Morfemas... Esto se debe a que morfemas es la variable con correlación más fuerte a la variable target... De esta manera se busca visualizar la data entre SLI y Desarrollo Típico en funcion de las variables
+
+```{r}
+data3 = data
+data3$Y <- ifelse(data3$Y == "0", "Desarrollo Típico", ifelse(data3$Y == "1", "SLI", data3$Y))
+
+ggplot(data = data3, aes(x = average_syl , y = mlu_morphemes, color = factor(Y))) +
+  geom_point() +
+  scale_color_manual(values = c("red", "blue"), name = "Diagnóstico") +  # Cambia el nombre de la leyenda
+  labs(x = "Vocales por sílaba", y = "Morfemas") +
+  theme(legend.position = "right", legend.justification = "center")  # Ajusta la posición de la leyenda al centro
+ggplot(data = data3, aes(x = average_syl , y = mlu_morphemes, color = factor(Y))) +
+  geom_point() +
+  scale_color_manual(values = c("red", "blue"), name = "Diagnóstico") +  # Cambia el nombre de la leyenda
+  labs(x = "Vocales por sílaba", y = "Morfemas") +
+  theme(legend.position = "top", legend.justification = "center")  # Ajusta la posición de la leyenda al centro
+ggplot(data = data3, aes(x = average_syl , y = mlu_morphemes, color = factor(Y))) +
+  geom_point() +
+  scale_color_manual(values = c("red", "blue"), name = "Diagnóstico") +  # Cambia el nombre de la leyenda
+  labs(x = "Vocales por sílaba", y = "Morfemas") +
+  theme(legend.position = "right", legend.justification = "center")  # Ajusta la posición de la leyenda al centro
+
+ggplot(data = data3, aes(x = f_k , y = mlu_morphemes       , color = factor(Y))) +
+  geom_point() +
+  scale_color_manual(values = c("red", "blue")) +
+  labs(x = "Vocales por sílaba", y = "Morfemas") +
+  ggtitle("Scatterplot f_k y Morfemas")
+
+ggplot(data = data3, aes(x = r_2_i_verbs , y = mlu_morphemes       , color = factor(Y))) +
+  geom_point() +
+  scale_color_manual(values = c("red", "blue")) +
+  labs(x = "r_2_i_verbs", y = "Morfemas") +
+  ggtitle("Scatterplot r_2_i_verbs y Morfemas")
+
+ggplot(data = data3, aes(x = word_errors , y = mlu_morphemes       , color = factor(Y))) +
+  geom_point() +
+  scale_color_manual(values = c("red", "blue")) +
+  labs(x = "word_errors", y = "Morfemas") +
+  ggtitle("Scatterplot word_errors y Morfemas")
+
+ggplot(data = data3, aes(x = freq_ttr , y = mlu_morphemes       , color = factor(Y))) +
+  geom_point() +
+  scale_color_manual(values = c("red", "blue")) +
+  labs(x = "freq_ttr", y = "Morfemas") +
+  ggtitle("Scatterplot f_k y Morfemas")
+
+ggplot(data = data3, aes(x = age_years , y = mlu_morphemes       , color = factor(Y))) +
+  geom_point() +
+  scale_color_manual(values = c("red", "blue")) +
+  labs(x = "age_years", y = "Morfemas") +
+  ggtitle("Scatterplot age_years y Morfemas")
+
+
+ggplot(data = data3, aes(x = examiner_TNW , y = mlu_morphemes       , color = factor(Y))) +
+  geom_point() +
+  scale_color_manual(values = c("red", "blue")) +
+  labs(x = "examiner_TNW", y = "Morfemas") +
+  ggtitle("Scatterplot examiner_TNW y Morfemas")
+
+```
+
+Se reescriben variables en data2 en tanto esta contendrá las nuevas variables seleccionadas con los algoritmos anteriores.
+
+#Filler y age_years se va por cor<0.1 y se arma los datasets finales
+
+```{r}
+
+data2 <- data.frame("Y"=data$Y,"r_2_i_verbs"=data$r_2_i_verbs,"mlu_morphemes"=data$mlu_morphemes,"word_errors"=data$word_errors,"regular_past_ed"=data$regular_past_ed)
+length(data2)
+cor(data2)
+
+  #r_2_i_verbs+
+  #mlu_morphemes+
+  #word_errors+
+  #average_syl+
+  #freq_ttr+
+  #regular_past_ed
+```
+
+
+
+
+#Utilizamos un modelo de clasificación KNN optimizado con validación cruzada evaluando Roor mean Squared error,Rsquared coeficiente de determinación y Mean Absolute Error. Donde estas se equilibran.
+
+```{r}
+
+set.seed(50)
+indices_entrenamiento <- sample(1:nrow(data2), 0.7 * nrow(data))
+datos_entrenamiento <- data2[indices_entrenamiento, ]
+#armamos otro dataset sin resultados para entrenar el modelo.
+datos_entrenamiento_sr <- datos_entrenamiento[, !(names(datos_entrenamiento) %in% "Y")]
+datos_prueba <- data2[-indices_entrenamiento, ]
+datos_prueba_sr <- datos_prueba[, !(names(datos_prueba) %in% "Y")]
+
+train_knn <- function(train_data, test_data, k_value) {
+    modelo_knn <- knn(train = train_data[, -ncol(train_data)],
+                      test = test_data[, -ncol(test_data)],
+                      cl = train_data$Y, k = k_value)
+    return(modelo_knn)
+}
+
+set.seed(50)
+
+#Invariante: valor de "n"
+#Precondicion: que exista Y,datos_entrenameinto, control y grid
+#postcondicion: modelo_knn
+print(length(indices_entrenamiento))
+n =round(length(indices_entrenamiento)^ (1/2))
+n
+
+# Definir el control de entrenamiento con validación cruzada
+    
+control <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
+grid <- expand.grid(k = 1:n)  # Puedes ajustar el rango según tus necesidades
+modelo_knn <- train(Y ~ ., data = datos_entrenamiento, method = "knn",
+                  trControl = control, tuneGrid = grid)
+
+# Ver los resultados y el mejor valor de k
+print(modelo_knn)
+
+# Obtener la mejor precisión y el mejor valor de k
+best_accuracy <- max(modelo_knn$results$Accuracy)
+best_k <- modelo_knn$bestTune$k
+best_k
+
+#Se selecciona un K de 7... dado que se plancha el promedio de los 3 medidores
+
+#En k=12 el promedio baja pero en k=13 el rSquared baja un poco más. Ambos serían validos. Se uso raiz de n
+```
+
+
+
+```{r}
+length(data2)
+# se entrenó y se decidio evaluar con k=14... este valor es teorico, aunque se exploraron otras formas de # #averiguar este valor. En el paper asociado se explica su seleccion y fuente.
+
+k <- 14
+modelo_knn <- train_knn(datos_entrenamiento, datos_prueba, k)
+
+# Evaluar el modelo y obtener la matriz de confusión
+confusion_matrix <- confusionMatrix(data = as.factor(modelo_knn), reference = as.factor(datos_prueba$Y))
+print(confusion_matrix)
+
+predicciones <- as.factor(modelo_knn)
+verdaderos <- as.factor(datos_prueba$Y)
+
+
+#Invariable : Data y Predicciones
+#Precondición: que exista "verdaderos"
+#postcondición: el error guardado en variable "zero_one_loss"
+
+# capitulo 2.2 scorting and ranking pagina 62 y 63
+zero_one_loss <- function(data, predicciones) {
+  sum(verdaderos != predicciones) / length(verdaderos)
+}
+loss_zero <- zero_one_loss(verdaderos, predicciones)
+
+print("La función de perdida es de")
+print(loss_zero)
+
+#loss: 0.2101911.En este caso, un valor de pérdida de 0.295858 significa que el modelo está haciendo clasificaciones #incorrectas en aproximadamente el 21% de las instancias.
+
+
+
+prediccion <- prediction(as.numeric(modelo_knn), as.numeric(datos_prueba$Y))
+rendimiento <- performance(prediccion, "tpr", "fpr")
+
+
+# Obtener las predicciones y rendimiento
+prediccion <- prediction(as.numeric(modelo_knn), as.numeric(datos_prueba$Y))
+rendimiento <- performance(prediccion, "tpr", "fpr")
+
+# Gráfico de Curva ROC más atractivo
+plot(rendimiento, main = "Curva ROC para KNN", print.auc = TRUE, col = "blue", lwd = 2, lty = 1, xlab = "Tasa de Falsos Positivos (FPR)", ylab = "Tasa de Verdaderos Positivos (TPR)")
+abline(a = 0, b = 1, col = "red")
+
+# Añadir área bajo la curva ROC con color de relleno
+auc <- performance(prediccion, "auc")
+auc_value <- round(as.numeric(auc@y.values), 3)
+text(0.5, 0.3, paste("AUC =", auc_value), col = "blue", cex = 1.2)
+polygon(c(0, rendimiento@x.values[[1]], 1), c(0, rendimiento@y.values[[1]], 1), col = "#ADD8E6", border = NA)
+
+#referencia: https://www.rdocumentation.org/packages/ROCR/versions/1.0-11/topics/prediction
+
+
+
+# Calcular el F1-score
+#Con k=6 tengo AUC de 0.975 y 0.98 accuracy
+#con k=7 tengo auc de 0.98 y 0.984 de accuracy
+```
+
+```{r}
+length(data2)
+
+# se entrena y se evalúa con k = 13
+k <- 14
+modelo_knn <- train_knn(datos_entrenamiento, datos_prueba, k)
+
+# Obtener las predicciones
+predicciones <- as.factor(modelo_knn)
+verdaderos <- as.factor(datos_prueba$Y)
+
+# Calcular la matriz de confusión
+confusion_matrix <- confusionMatrix(data = predicciones, reference = verdaderos)
+print(confusion_matrix)
+
+# Calcular la pérdida cero-uno
+zero_one_loss <- function(data, predicciones) {
+    sum(data != predicciones) / length(data)
+}
+loss_zero <- zero_one_loss(verdaderos, predicciones)
+print(paste("La función de pérdida es de", loss_zero))
+
+# Calcular la curva ROC
+prediccion <- prediction(as.numeric(modelo_knn), as.numeric(verdaderos))
+rendimiento <- performance(prediccion, "tpr", "fpr")
+
+# Gráfico de la curva ROC
+plot(rendimiento, main = "Curva ROC para KNN", print.auc = TRUE, col = "blue", lwd = 2, lty = 1, 
+     xlab = "Tasa de Falsos Positivos (FPR)", ylab = "Tasa de Verdaderos Positivos (TPR)")
+abline(a = 0, b = 1, col = "red")
+
+# Añadir área bajo la curva ROC
+auc <- performance(prediccion, "auc")
+auc_value <- round(as.numeric(auc@y.values), 3)
+text(0.5, 0.3, paste("AUC =", auc_value), col = "blue", cex = 1.2)
+polygon(c(0, rendimiento@x.values[[1]], 1), c(0, rendimiento@y.values[[1]], 1), col = "#ADD8E6", border = NA)
+
+```
+
+
+#Comentarios finales.
+#Luego de la segunda regresion logistica pueden ocurrir dos escenarios. Que queden pocas variables, de gran capacidad de predicción o que queden un numero importante y sea necesaria la 3er iteracion. Si quedaron 5 o 6 variables, la tercer regresion podria considerarse un exceso, en tanto eliminaria variables que tienen altisima capacidad de prediccion que podrian ser de utilidad para el usuario. Quizas es de interes para el médico no eliminar estas dos ultimas variables ya que las considera importantes... esto el modelo lo soporta, en tanto para este caso pasar de 6 a 4 variables la mejora del modelo es despreciable, y se estaría reduciendo de más las caracteristicas.
